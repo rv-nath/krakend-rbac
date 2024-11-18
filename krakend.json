@@ -4,17 +4,74 @@
   "name": "KrakenD - API Gateway",
   "timeout": "3000ms",
   "cache_ttl": "300s",
-  "endpoints": [],
   "plugin": {
     "pattern": ".so",
     "folder": "/opt/krakend/plugins/"
-  }, 
+  },
   "extra_config": {
+    "github.com/devopsfaith/krakend-jose/validator": {
+      "alg": "RS256",
+      "jwk_url": "https://YOUR_AUTH_PROVIDER/.well-known/jwks.json",
+      "roles_key": "roles",
+      "roles": ["admin", "user"],
+      "token_extractors": [
+        {
+          "name": "header",
+          "args": ["Authorization", "Bearer"]
+        }
+      ]
+    },
+    "github.com/devopsfaith/krakend-martian": {
+      "header.Modifier": {
+        "scope": ["request"],
+        "name": "userId",
+        "value": "@extract:jwt.sub"
+      }
+    },
     "plugin/http-server": {
       "name": ["krakend-rbac"],
       "krakend-rbac": {
         "path": "/krak"
       }
     }
-  }
+  },
+  "endpoints": [
+    {
+      "endpoint": "/signup",
+      "method": "POST",
+      "backend": [
+        {
+          "url_pattern": "/backend-signup",
+          "host": [
+            "http://your-backend-service"
+          ]
+        }
+      ]
+    },
+    {
+      "endpoint": "/login",
+      "method": "POST",
+      "backend": [
+        {
+          "url_pattern": "/backend-login",
+          "host": [
+            "http://your-backend-service"
+          ]
+        }
+      ]
+    },
+    {
+      "endpoint": "/protected-resource",
+      "method": "GET",
+      "backend": [
+        {
+          "url_pattern": "/backend-protected",
+          "host": [
+            "http://your-backend-service"
+          ]
+        }
+      ]
+    }
+  ]
 }
+
