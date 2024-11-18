@@ -48,6 +48,7 @@ func (r registerer) registerHandlers(_ context.Context, extra map[string]interfa
 	rbacInstance := rbac.NewRBAC(fetchUserRoles, fetchRolePerms, fetchResources)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logger.Info("Executing plugin: ", pluginName)
 		logger.Debug("Incoming request path: ", r.URL.Path)
 
 		// Parse the intent from the request
