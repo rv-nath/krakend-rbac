@@ -1,1 +1,1 @@
-ocker build -o ./output --target output -f Dockerfile .
+docker build -o ./output --target output -f Dockerfile .

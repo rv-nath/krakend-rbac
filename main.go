@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/rv-nath/rbac-rv/rbac"
 )
@@ -39,10 +40,19 @@ func (r registerer) registerHandlers(_ context.Context, extra map[string]interfa
 
 	// The config variable contains all the keys defined in the configuration.
 	// If the key doesn't exist or is not a map, the plugin returns an error and the default handler.
-	_, ok := extra[pluginName].(map[string]interface{})
+	cfg, ok := extra[pluginName].(map[string]interface{})
 	if !ok {
 		return h, errors.New("configuration not found")
 	}
+
+	// Extract exceptions list from configuration
+	logger.Debug("Extracting exceptions from configuration...")
+	exceptions, _ := cfg["exceptions"].([]interface{})
+	exceptionURLs := make([]string, len(exceptions))
+	for i, url := range exceptions {
+		exceptionURLs[i] = url.(string)
+	}
+	logger.Debug("Configured exceptionURLs:", exceptionURLs)
 
 	// Initialize RBAC with the appropriate callbacks.
 	rbacInstance := rbac.NewRBAC(fetchUserRoles, fetchRolePerms, fetchResources)
@@ -50,6 +60,14 @@ func (r registerer) registerHandlers(_ context.Context, extra map[string]interfa
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		logger.Info("Executing plugin: ", pluginName)
 		logger.Debug("Incoming request path: ", r.URL.Path)
+
+		// Skip validation if the URL is in the exceptions list
+		for _, exception := range exceptionURLs {
+			if strings.HasPrefix(r.URL.Path, exception) {
+				h.ServeHTTP(w, r)
+				return
+			}
+		}
 
 		// Parse the intent from the request
 		action, resource, resourceID, err := rbac.DetermineIntent(r.Method, r.URL.Path, fetchResources)
