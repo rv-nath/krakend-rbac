@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rv-nath/rbac-rv/rbac"
 )
 
@@ -62,8 +64,10 @@ func (r registerer) registerHandlers(_ context.Context, extra map[string]interfa
 		logger.Debug("Incoming request path: ", r.URL.Path)
 
 		// Skip validation if the URL is in the exceptions list
+		logger.Debug("checking if the path is an exception...")
 		for _, exception := range exceptionURLs {
 			if strings.HasPrefix(r.URL.Path, exception) {
+				logger.Debug("Request path is an exception:", exception)
 				h.ServeHTTP(w, r)
 				return
 			}
@@ -132,16 +136,128 @@ func (n noopLogger) Fatal(_ ...interface{})    {}
 
 // Example callback functions for fetching roles and permissions
 func fetchUserRoles(userID string) (rbac.UserRoles, error) {
+	logger.Debug("Fetching roles for user: ", userID)
 	// Implement the logic to fetch user roles from your backend
-	return rbac.UserRoles{Roles: []string{"admin"}}, nil
+	// return rbac.UserRoles{Roles: []string{"admin"}}, nil
+	// Define the query to get role names for the given userID
+	query := `
+        SELECT rm.role_name
+        FROM user_roles ur
+        JOIN roles_master rm ON ur.role_id = rm.role_id
+        WHERE ur.user_id = $1
+    `
+
+	rows, err := dbPool.Query(context.Background(), query, userID)
+	if err != nil {
+		return rbac.UserRoles{}, fmt.Errorf("failed to execute query: %w", err)
+	}
+	defer rows.Close()
+
+	var roles []string
+	for rows.Next() {
+		var roleName string
+		if err := rows.Scan(&roleName); err != nil {
+			return rbac.UserRoles{}, fmt.Errorf("failed to scan row: %w", err)
+		}
+		roles = append(roles, roleName)
+	}
+
+	if rows.Err() != nil {
+		return rbac.UserRoles{}, fmt.Errorf("error iterating rows: %w", rows.Err())
+	}
+
+	return rbac.UserRoles{Roles: roles}, nil
 }
 
+/*
+call back fn for fetching resources list from backend db.
+*/
 func fetchResources() ([]string, error) {
 	// Implement the logic to fetch resource names
-	return []string{"user", "order"}, nil
+	// return []string{"user", "order"}, nil
+	logger.Debug("Fetching resources from database...")
+	query := `SELECT name FROM resources_master`
+	rows, err := dbPool.Query(context.Background(), query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute query: %w", err)
+	}
+	defer rows.Close()
+
+	var resources []string
+	for rows.Next() {
+		var resourceName string
+		if err := rows.Scan(&resourceName); err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+		resources = append(resources, resourceName)
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", rows.Err())
+	}
+
+	return resources, nil
 }
 
 func fetchRolePerms(roleID string) (rbac.RolePermissions, error) {
 	// Implement the logic to fetch role permissions from your backend
 	return rbac.RolePermissions{}, nil
+	query := `
+        SELECT 
+            rm.name AS resource_name,
+            pm.name AS permission_name,
+            rrp.scope_id,
+            true AS allowed
+        FROM role_resource_permissions rrp
+        JOIN resources_master rm ON rrp.resource_id = rm.id
+        JOIN permissions_master pm ON rrp.permission_id = pm.id
+        WHERE rrp.role_id = $1
+    `
+
+	rows, err := dbPool.Query(context.Background(), query, roleID)
+	if err != nil {
+		return rbac.RolePermissions{}, fmt.Errorf("failed to execute query: %w", err)
+	}
+	defer rows.Close()
+
+	var permissions []rbac.Permission
+	for rows.Next() {
+		var resourceName, permissionName, scopeID string
+		var allowed bool
+
+		if err := rows.Scan(&resourceName, &permissionName, &scopeID, &allowed); err != nil {
+			return rbac.RolePermissions{}, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		permissions = append(permissions, rbac.Permission{
+			Resource:   resourceName,
+			Permission: permissionName,
+			Allowed:    allowed,
+			Scope:      scopeID,
+		})
+	}
+
+	if rows.Err() != nil {
+		return rbac.RolePermissions{}, fmt.Errorf("error iterating rows: %w", rows.Err())
+	}
+
+	return rbac.RolePermissions{
+		RoleID: roleID,
+		Perms:  permissions,
+	}, nil
+}
+
+// Global connection
+var dbPool *pgxpool.Pool
+
+func init() {
+	var err error
+	dbURL := os.Getenv("DATABASE_URL")
+	logger.Debug("Connecting to database : {}...", dbURL)
+	dbPool, err = pgxpool.New(context.Background(), dbURL)
+	if err != nil {
+		logger.Error("Unable to connect to database: %v\n", err)
+		os.Exit(1)
+	}
+	logger.Info("Connected to database")
 }
