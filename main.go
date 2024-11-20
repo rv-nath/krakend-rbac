@@ -2,11 +2,9 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rv-nath/rbac-rv/rbac"
@@ -40,22 +38,6 @@ func (r registerer) registerHandlers(_ context.Context, extra map[string]interfa
 	   }
 	*/
 
-	// The config variable contains all the keys defined in the configuration.
-	// If the key doesn't exist or is not a map, the plugin returns an error and the default handler.
-	cfg, ok := extra[pluginName].(map[string]interface{})
-	if !ok {
-		return h, errors.New("configuration not found")
-	}
-
-	// Extract exceptions list from configuration
-	logger.Debug("Extracting exceptions from configuration...")
-	exceptions, _ := cfg["exceptions"].([]interface{})
-	exceptionURLs := make([]string, len(exceptions))
-	for i, url := range exceptions {
-		exceptionURLs[i] = url.(string)
-	}
-	logger.Debug("Configured exceptionURLs:", exceptionURLs)
-
 	// Initialize RBAC with the appropriate callbacks.
 	rbacInstance := rbac.NewRBAC(fetchUserRoles, fetchRolePerms, fetchResources)
 
@@ -63,14 +45,11 @@ func (r registerer) registerHandlers(_ context.Context, extra map[string]interfa
 		logger.Info("Executing plugin: ", pluginName)
 		logger.Debug("Incoming request path: ", r.URL.Path)
 
-		// Skip validation if the URL is in the exceptions list
-		logger.Debug("checking if the path is an exception...")
-		for _, exception := range exceptionURLs {
-			if strings.HasPrefix(r.URL.Path, exception) {
-				logger.Debug("Request path is an exception:", exception)
-				h.ServeHTTP(w, r)
-				return
-			}
+		// Check if the bypassValidation field is available in the context
+		if bypass, ok := r.Context().Value("bypassValidation").(bool); ok && bypass {
+			logger.Debug("[PLUGIN: JWT Validator] Bypassing validation based on context flag")
+			h.ServeHTTP(w, r)
+			return
 		}
 
 		// Parse the intent from the request
@@ -200,8 +179,9 @@ func fetchResources() ([]string, error) {
 }
 
 func fetchRolePerms(roleID string) (rbac.RolePermissions, error) {
+	logger.Debug("Fetching permissions for role: ", roleID)
 	// Implement the logic to fetch role permissions from your backend
-	return rbac.RolePermissions{}, nil
+	// return rbac.RolePermissions{}, nil
 	query := `
         SELECT 
             rm.name AS resource_name,
